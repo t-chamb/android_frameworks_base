@@ -285,6 +285,11 @@ public class CollapsedStatusBarFragment extends Fragment implements CommandQueue
 
     @Override
     public void onTuningChanged(String key, String newValue) {
+        if (getContext() == null) {
+            // The setting changed while the fragment is detached (seen during first-boot
+            // setup); it is re-read when the fragment attaches again.
+            return;
+        }
         boolean wasClockBlacklisted = mIsClockBlacklisted;
         mIsClockBlacklisted = StatusBarIconController.getIconHideList(
                 getContext(), newValue).contains("clock");
