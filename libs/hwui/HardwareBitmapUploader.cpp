@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <android-base/properties.h>
 #include "HardwareBitmapUploader.h"
 
 #include <EGL/egl.h>
@@ -393,6 +394,46 @@ sk_sp<Bitmap> HardwareBitmapUploader::allocateHardwareBitmap(const SkBitmap& sou
     }
 
     SkBitmap bitmap = makeHwCompatible(format, sourceBitmap);
+
+    // Some old GL drivers (PowerVR Rogue DDK 1.7 on the Xiaomi Mi Pad 3) corrupt texels when
+    // glTexSubImage2D targets an EGLImage-backed texture whose buffer stride differs from its
+    // width, which skews every hardware bitmap (launcher icons, etc). On such devices copy the
+    // pixels into the buffer on the CPU, honouring the stride gralloc reports.
+    static const bool sCpuUpload =
+            android::base::GetBoolProperty("debug.hwui.cpu_bitmap_upload", false);
+    if (sCpuUpload) {
+        AHardwareBuffer_Desc cpuDesc = {
+                .width = static_cast<uint32_t>(bitmap.width()),
+                .height = static_cast<uint32_t>(bitmap.height()),
+                .layers = 1,
+                .format = format.bufferFormat,
+                .usage = AHARDWAREBUFFER_USAGE_CPU_READ_NEVER |
+                         AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY |
+                         AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
+        };
+        UniqueAHardwareBuffer cpuAhb = allocateAHardwareBuffer(cpuDesc);
+        if (cpuAhb) {
+            AHardwareBuffer_Desc actual;
+            AHardwareBuffer_describe(cpuAhb.get(), &actual);
+            void* addr = nullptr;
+            if (AHardwareBuffer_lock(cpuAhb.get(), AHARDWAREBUFFER_USAGE_CPU_WRITE_RARELY, -1,
+                                     nullptr, &addr) == 0 && addr != nullptr) {
+                const size_t bpp = bitmap.bytesPerPixel();
+                const size_t srcRow = static_cast<size_t>(bitmap.width()) * bpp;
+                const size_t dstRow = static_cast<size_t>(actual.stride) * bpp;
+                uint8_t* dst = static_cast<uint8_t*>(addr);
+                for (int y = 0; y < bitmap.height(); y++) {
+                    memcpy(dst + y * dstRow, bitmap.getAddr(0, y), srcRow);
+                }
+                AHardwareBuffer_unlock(cpuAhb.get(), nullptr);
+                return Bitmap::createFrom(cpuAhb.get(), bitmap.colorType(),
+                                          bitmap.refColorSpace(), bitmap.alphaType(),
+                                          Bitmap::computePalette(bitmap));
+            }
+            ALOGW("allocateHardwareBitmap(): CPU upload lock failed, using the GL path");
+        }
+    }
+
     AHardwareBuffer_Desc desc = {
             .width = static_cast<uint32_t>(bitmap.width()),
             .height = static_cast<uint32_t>(bitmap.height()),
