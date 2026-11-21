@@ -266,7 +266,10 @@ void EglManager::initExtensions() {
     EglExtensions.displayP3 = extensions.has("EGL_EXT_gl_colorspace_display_p3_passthrough");
     EglExtensions.hdr = extensions.has("EGL_EXT_gl_colorspace_bt2020_pq");
     EglExtensions.contextPriority = extensions.has("EGL_IMG_context_priority");
-    EglExtensions.surfacelessContext = extensions.has("EGL_KHR_surfaceless_context");
+    // Some drivers (PowerVR DDK 1.9 on MT8173) keep using a released surface after a surfaceless
+    // eglMakeCurrent. With debug.hwui.disable_surfaceless set, keep a 1x1 pbuffer current instead.
+    EglExtensions.surfacelessContext = extensions.has("EGL_KHR_surfaceless_context") &&
+                                       !property_get_bool("debug.hwui.disable_surfaceless", false);
     EglExtensions.fenceSync = extensions.has("EGL_KHR_fence_sync");
     EglExtensions.waitSync = extensions.has("EGL_KHR_wait_sync");
     EglExtensions.nativeFenceSync = extensions.has("EGL_ANDROID_native_fence_sync");
